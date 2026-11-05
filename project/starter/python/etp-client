@@ -1,3 +1,0 @@
-#!/bin/sh
-# Launches the Python client. The self-check and the grader run ./etp-client.
-exec python3 "$(dirname "$0")/src/client.py" "$@"

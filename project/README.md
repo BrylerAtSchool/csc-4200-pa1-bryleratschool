@@ -1,58 +1,49 @@
-# CSC 4200/5200 Fall 2026 — Project Kit
+# PA1 — ETP/1 Client and Server
 
-Everything you need to start PA1. The PDFs in Canvas are the authority:
-the **Project Handbook**, the **ETP/1 Specification**, and the **PA1 brief**.
+**Student:** _your full name_ (`your-github-username`)
+**Course:** CSC 4200 / CSC 5200 (delete one) — Fall 2026
+**Language:** _C or Python_
+**Submitted commit:** _the SHA you paste into Canvas_
 
-| Path | What it is |
+## Build and run
+
+```
+make build
+make run-server PORT=5000 ROOT=server-files      # in one terminal
+./etp-client --host 127.0.0.1 --port 5000 --name YOURNAME list    # in another
+```
+
+_Replace this with anything else a grader needs: dependencies you installed, the
+Python or gcc version you used, how to run your own tests._
+
+## What works and what does not
+
+_Be specific and honest. Paste the `Execution: N / 30 points` and `Build and
+repository: N / 10` lines from `make check`. List any test
+that fails and what you believe the cause is. Known limitations go here, not in a
+footnote. An honest "S16 fails because ..." earns more than silence._
+
+## Files
+
+| File | What it is |
 |---|---|
-| `etp_selfcheck.py` | Runs the same execution tests the grader runs. Use it often. |
-| `starter/python/` | Python starter: launchers, Makefile, skeleton, templates |
-| `starter/c/` | C starter: headers, Makefile, skeleton, templates |
+| `src/...` | |
+| `DESIGN.md` | design document |
+| `AI_USE.md` | AI-use disclosure and log |
+| `evidence/pa1-capture.pcap` | loopback capture of my PUT and GET sessions |
+| `evidence/time-wait.txt` | `ss` output showing TIME-WAIT after my session |
+| `evidence/ANALYSIS.md` | my capture analysis |
 
-## Start your PA1 repository
+---
 
-Pick **one** language. Replace `USERNAME` with your GitHub username. If git has
-never been used in your VM, tell it who you are first (once):
+## Authorship statement
 
-```bash
-git config --global user.name  "Your Name"
-git config --global user.email "you@tntech.edu"
-```
+I am the author of this submission. Except where this README or `AI_USE.md`
+says otherwise, I wrote, or rewrote and understand, every part of it — code,
+documents and evidence — and I can explain any line of it to the instructor or
+GTA. I am responsible for its correctness, including any part a
+generative AI tool helped me produce. My use of AI tools is disclosed in full in
+`AI_USE.md`. The capture and measurements in `evidence/` come from my own programs,
+run by me.
 
-```bash
-cd ~/csc4200-course && git pull                 # get the latest kit
-mkdir -p ~/csc4200-work && cd ~/csc4200-work
-cp -r ~/csc4200-course/project/starter/python csc4200-pa1-USERNAME     # or starter/c
-cd csc4200-pa1-USERNAME
-git init -b main
-git add -A && git commit -m "Start PA1 from the course starter kit"
-```
-
-Then create an **empty, private** repository named `csc4200-pa1-USERNAME` on
-GitHub (no README, no license), and push:
-
-```bash
-git remote add origin git@github.com:USERNAME/csc4200-pa1-USERNAME.git
-git push -u origin main
-```
-
-`git@github.com:` needs an SSH key registered with GitHub. Without one, use
-`https://github.com/USERNAME/csc4200-pa1-USERNAME.git` instead and give a GitHub
-personal access token when git asks for a password.
-
-Add the instructor and the GTA as collaborators (Settings → Collaborators).
-Their GitHub usernames are posted in Canvas.
-
-**C students:** if `make build` says `openssl/evp.h: No such file or directory`,
-run `sudo apt install libssl-dev` once.
-
-## Check your work
-
-```bash
-make check                     # same as: python3 ~/csc4200-course/project/etp_selfcheck.py
-```
-
-The self-check builds your code, runs every execution test, scores your build
-and repository the way the grader does, and checks that your evidence files are
-present and complete. It never tells you what your capture
-analysis should say — reading that from your own capture is the assignment.
+**Signed:** _full name_  **Date:** _date_
