@@ -26,131 +26,143 @@
 #include <netinet/in.h>
 
 struct tp_listener {
-    int fd;
+    int socket_file_descriptor;
 };
 
 struct tp_conn {
-    int fd;
+    int socket_file_descriptor;
 };
 
 tp_listener *tp_listen(const char *bind_addr, uint16_t port)
 {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return NULL;
+    // AF_INET specifies IPv4 (address family internet); SOCK_STREAM specifies a reliable, ordered, two-way byte stream (TCP)
+    int listening_socket_file_descriptor = socket(AF_INET, SOCK_STREAM, 0);
+    if (listening_socket_file_descriptor < 0) return NULL;
 
-    int opt = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        close(fd);
+    int reuse_address_enabled = 1;
+    // SOL_SOCKET tells setsockopt() that SO_REUSEADDR is a general socket option, not specific to a network protocol
+    // SO_REUSEADDR is the socket option being set to reuse_address_enabled
+    if (setsockopt(listening_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_address_enabled, sizeof(reuse_address_enabled)) < 0) {
+        close(listening_socket_file_descriptor);
         return NULL;
     }
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
+    // Initialize every byte in the socket address' memory block to 0
+    struct sockaddr_in bind_address = {0};
+    // Set type to IPv4
+    bind_address.sin_family = AF_INET;
+    // htons = "host to network short" which converts a 16-bit number from the cpu's native byte order to network byte order
+    bind_address.sin_port = htons(port);
 
-    if (bind_addr == NULL || strlen(bind_addr) == 0) {
-        addr.sin_addr.s_addr = INADDR_ANY;
-    } else if (inet_pton(AF_INET, bind_addr, &addr.sin_addr) <= 0) {
-        close(fd);
+    // If inputted address is null or empty, set the socket's internet address to listen on any local IPv4 address (INADDR_ANY).
+    if (bind_addr == NULL || bind_addr[0] == '\0') {
+        bind_address.sin_addr.s_addr = INADDR_ANY;
+    // Set the address of our sockaddr_in struct to the result of inet_pton (internet presentation to network) converting internet IP address from char* text to binary data
+    } else if (inet_pton(AF_INET, bind_addr, &bind_address.sin_addr) <= 0) {
+        close(listening_socket_file_descriptor);
         return NULL;
     }
 
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(fd, SOMAXCONN) < 0) {
-        close(fd);
+    // Bind the socket we created to the local address we created.
+    // If that fails (if the port is already in use or the IP address isn't assigned to this machine, or lack of permissions),
+    // listen which marks the socket as a server socket that can queue incoming connection requests and accept() them.
+    if (bind(listening_socket_file_descriptor, (struct sockaddr *)&bind_address, sizeof(bind_address)) < 0 || listen(listening_socket_file_descriptor, SOMAXCONN) < 0) {
+        close(listening_socket_file_descriptor);
         return NULL;
     }
 
-    tp_listener *l = malloc(sizeof(tp_listener));
-    if (l == NULL) {
-        close(fd);
+    // Allocate space for a tp_listener data object which just contains the created socket "id"
+    tp_listener *listener = malloc(sizeof(tp_listener));
+    if (listener == NULL) {
+        close(listening_socket_file_descriptor);
         return NULL;
     }
 
-    l->fd = fd;
-    return l;
+    // Set the listener's socket "id" to the one we created.
+    listener->socket_file_descriptor = listening_socket_file_descriptor;
+    return listener;
 }
 
 tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
 {
-    struct sockaddr_in addr;
-    socklen_t addrlen = sizeof(addr);
-    int fd = accept(l->fd, (struct sockaddr *)&addr, &addrlen);
+    struct sockaddr_in peer_address;
+    socklen_t peer_address_length = sizeof(peer_address);
+    int connection_socket_file_descriptor = accept(l->socket_file_descriptor, (struct sockaddr *)&peer_address, &peer_address_length);
 
-    if (fd < 0) return NULL;
+    if (connection_socket_file_descriptor < 0) return NULL;
 
     if (peer != NULL && peerlen > 0) {
-        char ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip));
-        snprintf(peer, peerlen, "%s:%u", ip, ntohs(addr.sin_port));
+        char peer_ip_address[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &peer_address.sin_addr, peer_ip_address, sizeof(peer_ip_address));
+        snprintf(peer, peerlen, "%s:%u", peer_ip_address, ntohs(peer_address.sin_port));
     }
 
-    tp_conn *c = malloc(sizeof(tp_conn));
-    if (c == NULL) {
-        close(fd);
+    tp_conn *connection = malloc(sizeof(tp_conn));
+    if (connection == NULL) {
+        close(connection_socket_file_descriptor);
         return NULL;
     }
 
-    c->fd = fd;
-    return c;
+    connection->socket_file_descriptor = connection_socket_file_descriptor;
+    return connection;
 }
 
 tp_conn *tp_connect(const char *host, uint16_t port)
 {
-    struct addrinfo hints;
-    struct addrinfo *result = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo address_query_hints;
+    struct addrinfo *resolved_addresses = NULL;
+    memset(&address_query_hints, 0, sizeof(address_query_hints));
+    address_query_hints.ai_family = AF_UNSPEC;
+    address_query_hints.ai_socktype = SOCK_STREAM;
 
-    char port_str[6];
-    snprintf(port_str, sizeof(port_str), "%u", port);
+    char port_number_string[6];
+    snprintf(port_number_string, sizeof(port_number_string), "%u", port);
 
-    if (getaddrinfo(host, port_str, &hints, &result) != 0) return NULL;
+    if (getaddrinfo(host, port_number_string, &address_query_hints, &resolved_addresses) != 0) return NULL;
 
-    int fd = -1;
-    struct addrinfo *rp;
+    int connection_socket_file_descriptor = -1;
+    struct addrinfo *address_candidate;
 
-    for (rp = result; rp != NULL; rp = rp->ai_next) {
-        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (fd < 0) continue;
+    for (address_candidate = resolved_addresses; address_candidate != NULL; address_candidate = address_candidate->ai_next) {
+        connection_socket_file_descriptor = socket(address_candidate->ai_family, address_candidate->ai_socktype, address_candidate->ai_protocol);
+        if (connection_socket_file_descriptor < 0) continue;
 
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+        if (connect(connection_socket_file_descriptor, address_candidate->ai_addr, address_candidate->ai_addrlen) == 0) break;
 
-        close(fd);
-        fd = -1;
+        close(connection_socket_file_descriptor);
+        connection_socket_file_descriptor = -1;
     }
 
-    freeaddrinfo(result);
+    freeaddrinfo(resolved_addresses);
 
-    if (fd < 0) return NULL;
+    if (connection_socket_file_descriptor < 0) return NULL;
 
-    tp_conn *c = malloc(sizeof(tp_conn));
-    if (c == NULL) {
-        close(fd);
+    tp_conn *connection = malloc(sizeof(tp_conn));
+    if (connection == NULL) {
+        close(connection_socket_file_descriptor);
         return NULL;
     }
 
-    c->fd = fd;
-    return c;
+    connection->socket_file_descriptor = connection_socket_file_descriptor;
+    return connection;
 }
 
 int tp_send_all(tp_conn *c, const void *buf, size_t n)
 {
-    const uint8_t *data = buf;
-    size_t sent = 0;
+    const uint8_t *bytes_to_send = buf;
+    size_t bytes_sent = 0;
 
-    while (sent < n) {
-        ssize_t result = send(c->fd, data + sent, n - sent, MSG_NOSIGNAL);
+    while (bytes_sent < n) {
+        ssize_t send_result = send(c->socket_file_descriptor, bytes_to_send + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
 
-        if (result < 0) {
+        if (send_result < 0) {
             if (errno == EINTR) continue;
             return -1;
         }
 
-        if (result == 0) return -1;
+        if (send_result == 0) return -1;
 
-        sent += (size_t)result;
+        bytes_sent += (size_t)send_result;
     }
 
     return 0;
@@ -158,20 +170,20 @@ int tp_send_all(tp_conn *c, const void *buf, size_t n)
 
 int tp_recv_exact(tp_conn *c, void *buf, size_t n)
 {
-    uint8_t *data = buf;
-    size_t received = 0;
+    uint8_t *receive_buffer = buf;
+    size_t bytes_received = 0;
 
-    while (received < n) {
-        ssize_t result = recv(c->fd, data + received, n - received, 0);
+    while (bytes_received < n) {
+        ssize_t receive_result = recv(c->socket_file_descriptor, receive_buffer + bytes_received, n - bytes_received, 0);
 
-        if (result < 0) {
+        if (receive_result < 0) {
             if (errno == EINTR) continue;
             return -1;
         }
 
-        if (result == 0) return received == 0 ? 0 : -1;
+        if (receive_result == 0) return bytes_received == 0 ? 0 : -1;
 
-        received += (size_t)result;
+        bytes_received += (size_t)receive_result;
     }
 
     return 1;
@@ -181,17 +193,17 @@ void tp_close(tp_conn *c)
 {
     if (c == NULL) return;
 
-    shutdown(c->fd, SHUT_WR);
+    shutdown(c->socket_file_descriptor, SHUT_WR);
 
-    struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-    setsockopt(c->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    struct timeval receive_timeout;
+    receive_timeout.tv_sec = 1;
+    receive_timeout.tv_usec = 0;
+    setsockopt(c->socket_file_descriptor, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
 
-    uint8_t buffer[1024];
-    while (recv(c->fd, buffer, sizeof(buffer), 0) > 0) {}
+    uint8_t discard_buffer[1024];
+    while (recv(c->socket_file_descriptor, discard_buffer, sizeof(discard_buffer), 0) > 0) {}
 
-    close(c->fd);
+    close(c->socket_file_descriptor);
     free(c);
 }
 
@@ -199,6 +211,6 @@ void tp_close_listener(tp_listener *l)
 {
     if (l == NULL) return;
 
-    close(l->fd);
+    close(l->socket_file_descriptor);
     free(l);
 }
