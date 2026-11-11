@@ -25,11 +25,13 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 
-struct tp_listener {
+struct tp_listener
+{
     int socket_file_descriptor;
 };
 
-struct tp_conn {
+struct tp_conn
+{
     int socket_file_descriptor;
 };
 
@@ -37,12 +39,14 @@ tp_listener *tp_listen(const char *bind_addr, uint16_t port)
 {
     // AF_INET specifies IPv4 (address family internet); SOCK_STREAM specifies a reliable, ordered, two-way byte stream (TCP)
     int listening_socket_file_descriptor = socket(AF_INET, SOCK_STREAM, 0);
-    if (listening_socket_file_descriptor < 0) return NULL;
+    if (listening_socket_file_descriptor < 0)
+        return NULL;
 
     int reuse_address_enabled = 1;
     // SOL_SOCKET tells setsockopt() that SO_REUSEADDR is a general socket option, not specific to a network protocol
     // SO_REUSEADDR is the socket option being set to reuse_address_enabled
-    if (setsockopt(listening_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_address_enabled, sizeof(reuse_address_enabled)) < 0) {
+    if (setsockopt(listening_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_address_enabled, sizeof(reuse_address_enabled)) < 0)
+    {
         close(listening_socket_file_descriptor);
         return NULL;
     }
@@ -55,10 +59,13 @@ tp_listener *tp_listen(const char *bind_addr, uint16_t port)
     bind_address.sin_port = htons(port);
 
     // If inputted address is null or empty, set the socket's internet address to listen on any local IPv4 address (INADDR_ANY).
-    if (bind_addr == NULL || bind_addr[0] == '\0') {
+    if (bind_addr == NULL || bind_addr[0] == '\0')
+    {
         bind_address.sin_addr.s_addr = INADDR_ANY;
-    // Set the address of our sockaddr_in struct to the result of inet_pton (internet presentation to network) converting internet IP address from char* text to binary data
-    } else if (inet_pton(AF_INET, bind_addr, &bind_address.sin_addr) <= 0) {
+        // Set the address of our sockaddr_in struct to the result of inet_pton (internet presentation to network) converting internet IP address from char* text to binary data
+    }
+    else if (inet_pton(AF_INET, bind_addr, &bind_address.sin_addr) <= 0)
+    {
         close(listening_socket_file_descriptor);
         return NULL;
     }
@@ -66,24 +73,26 @@ tp_listener *tp_listen(const char *bind_addr, uint16_t port)
     // Bind the socket we created to the local address we created.
     // If that fails (if the port is already in use or the IP address isn't assigned to this machine, or lack of permissions),
     // listen which marks the socket as a server socket that can queue incoming connection requests and accept() them.
-    if (bind(listening_socket_file_descriptor, (struct sockaddr *)&bind_address, sizeof(bind_address)) < 0 || listen(listening_socket_file_descriptor, SOMAXCONN) < 0) {
+    if (bind(listening_socket_file_descriptor, (struct sockaddr *)&bind_address, sizeof(bind_address)) < 0 || listen(listening_socket_file_descriptor, SOMAXCONN) < 0)
+    {
         close(listening_socket_file_descriptor);
         return NULL;
     }
 
     // Allocate space for a tp_listener data object which just contains the created socket "id"
     tp_listener *listener = malloc(sizeof(tp_listener));
-    if (listener == NULL) {
+    if (listener == NULL)
+    {
         close(listening_socket_file_descriptor);
         return NULL;
     }
-    
+
     // Set the listener's socket "id" to the one we created.
     listener->socket_file_descriptor = listening_socket_file_descriptor;
     return listener;
 }
 
-// Wait for incoming client connections and, when one is ready, return a connection object for it. 
+// Wait for incoming client connections and, when one is ready, return a connection object for it.
 tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
 {
     // The address of the connecting peer will be stored in this struct, and its length will be stored in peer_address_length.
@@ -92,9 +101,11 @@ tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
     // Block until a new connection is made to the listening socket, then accept it and return a new socket "id" for the connection.
     int connection_socket_file_descriptor = accept(l->socket_file_descriptor, (struct sockaddr *)&peer_address, &peer_address_length);
 
-    if (connection_socket_file_descriptor < 0) return NULL;
+    if (connection_socket_file_descriptor < 0)
+        return NULL;
 
-    if (peer != NULL && peerlen > 0) {
+    if (peer != NULL && peerlen > 0)
+    {
         // Create an array of characters to hold the peer's IP address in string form.
         char peer_ip_address[INET_ADDRSTRLEN];
         // Convert the binary IP address to a string
@@ -104,7 +115,8 @@ tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
     }
 
     tp_conn *connection = malloc(sizeof(tp_conn));
-    if (connection == NULL) {
+    if (connection == NULL)
+    {
         close(connection_socket_file_descriptor);
         return NULL;
     }
@@ -125,18 +137,22 @@ tp_conn *tp_connect(const char *host, uint16_t port)
     snprintf(port_number_string, sizeof(port_number_string), "%u", port);
 
     // Use getaddrinfo to resolve the host and port into a list of address structures.
-    if (getaddrinfo(host, port_number_string, &address_query_hints, &resolved_addresses) != 0) return NULL;
+    if (getaddrinfo(host, port_number_string, &address_query_hints, &resolved_addresses) != 0)
+        return NULL;
 
     int connection_socket_file_descriptor = -1;
     struct addrinfo *address_candidate;
 
     // Loop over every resolved address and try to create a socket and connect to it. If successful, break out of the loop.
-    for (address_candidate = resolved_addresses; address_candidate != NULL; address_candidate = address_candidate->ai_next) {
+    for (address_candidate = resolved_addresses; address_candidate != NULL; address_candidate = address_candidate->ai_next)
+    {
         connection_socket_file_descriptor = socket(address_candidate->ai_family, address_candidate->ai_socktype, address_candidate->ai_protocol);
-        if (connection_socket_file_descriptor < 0) continue;
+        if (connection_socket_file_descriptor < 0)
+            continue;
 
         // Try to connect to the current address candidate. If successful, break out of the loop.
-        if (connect(connection_socket_file_descriptor, address_candidate->ai_addr, address_candidate->ai_addrlen) == 0) break;
+        if (connect(connection_socket_file_descriptor, address_candidate->ai_addr, address_candidate->ai_addrlen) == 0)
+            break;
 
         close(connection_socket_file_descriptor);
         connection_socket_file_descriptor = -1;
@@ -144,10 +160,12 @@ tp_conn *tp_connect(const char *host, uint16_t port)
 
     freeaddrinfo(resolved_addresses);
 
-    if (connection_socket_file_descriptor < 0) return NULL;
+    if (connection_socket_file_descriptor < 0)
+        return NULL;
 
     tp_conn *connection = malloc(sizeof(tp_conn));
-    if (connection == NULL) {
+    if (connection == NULL)
+    {
         close(connection_socket_file_descriptor);
         return NULL;
     }
@@ -160,16 +178,20 @@ int tp_send_all(tp_conn *c, const void *buf, size_t n)
 {
     size_t bytes_sent = 0;
 
-    while (bytes_sent < n) {
+    while (bytes_sent < n)
+    {
         // MSG_NOSIGNAL prevents the sending of a SIGPIPE signal if the peer has closed the connection, which would otherwise terminate the process.
         ssize_t send_result = send(c->socket_file_descriptor, buf + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
-        
-        if (send_result < 0) {
-            if (errno == EINTR) continue;
+
+        if (send_result < 0)
+        {
+            if (errno == EINTR)
+                continue;
             return -1;
         }
 
-        if (send_result == 0) return -1;
+        if (send_result == 0)
+            return -1;
 
         // send_result is the number of bytes sent in this iteration, so we add it to bytes_sent to keep track of the total number of bytes sent.
         bytes_sent += (size_t)send_result;
@@ -180,18 +202,27 @@ int tp_send_all(tp_conn *c, const void *buf, size_t n)
 
 int tp_recv_exact(tp_conn *c, void *buf, size_t n)
 {
-    uint8_t *receive_buffer = buf;
     size_t bytes_received = 0;
 
-    while (bytes_received < n) {
-        ssize_t receive_result = recv(c->socket_file_descriptor, receive_buffer + bytes_received, n - bytes_received, 0);
+    while (bytes_received < n)
+    {
+        ssize_t receive_result = recv(c->socket_file_descriptor, buf + bytes_received, n - bytes_received, 0);
 
-        if (receive_result < 0) {
-            if (errno == EINTR) continue;
+        if (receive_result < 0)
+        {
+            if (errno == EINTR)
+                continue;
             return -1;
         }
 
-        if (receive_result == 0) return bytes_received == 0 ? 0 : -1;
+        // If the peer closed the connection
+        if (receive_result == 0)
+        {
+            if (bytes_received == 0)
+                return 0; // Peer closed cleanly before any bytes arrived
+            else
+                return -1; // Peer closed part-way through (failure)
+        }
 
         bytes_received += (size_t)receive_result;
     }
@@ -201,17 +232,21 @@ int tp_recv_exact(tp_conn *c, void *buf, size_t n)
 
 void tp_close(tp_conn *c)
 {
-    if (c == NULL) return;
+    if (c == NULL)
+        return;
 
+    // Stop transmissions on the socket, but allow the peer to continue sending data.
     shutdown(c->socket_file_descriptor, SHUT_WR);
 
     struct timeval receive_timeout;
     receive_timeout.tv_sec = 1;
     receive_timeout.tv_usec = 0;
+    // Set a receive timeout of 1 second on the socket to prevent blocking indefinitely while reading any remaining data from the peer.
     setsockopt(c->socket_file_descriptor, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
 
+    // Discard any remaining data from the peer until the connection is closed or the timeout expires.
     uint8_t discard_buffer[1024];
-    while (recv(c->socket_file_descriptor, discard_buffer, sizeof(discard_buffer), 0) > 0) {}
+    while (recv(c->socket_file_descriptor, discard_buffer, sizeof(discard_buffer), 0) > 0);
 
     close(c->socket_file_descriptor);
     free(c);
@@ -219,7 +254,8 @@ void tp_close(tp_conn *c)
 
 void tp_close_listener(tp_listener *l)
 {
-    if (l == NULL) return;
+    if (l == NULL)
+        return;
 
     close(l->socket_file_descriptor);
     free(l);
