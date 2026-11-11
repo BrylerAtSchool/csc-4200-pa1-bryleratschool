@@ -77,23 +77,29 @@ tp_listener *tp_listen(const char *bind_addr, uint16_t port)
         close(listening_socket_file_descriptor);
         return NULL;
     }
-
+    
     // Set the listener's socket "id" to the one we created.
     listener->socket_file_descriptor = listening_socket_file_descriptor;
     return listener;
 }
 
+// Wait for incoming client connections and, when one is ready, return a connection object for it. 
 tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
 {
+    // The address of the connecting peer will be stored in this struct, and its length will be stored in peer_address_length.
     struct sockaddr_in peer_address;
     socklen_t peer_address_length = sizeof(peer_address);
+    // Block until a new connection is made to the listening socket, then accept it and return a new socket "id" for the connection.
     int connection_socket_file_descriptor = accept(l->socket_file_descriptor, (struct sockaddr *)&peer_address, &peer_address_length);
 
     if (connection_socket_file_descriptor < 0) return NULL;
 
     if (peer != NULL && peerlen > 0) {
+        // Create an array of characters to hold the peer's IP address in string form.
         char peer_ip_address[INET_ADDRSTRLEN];
+        // Convert the binary IP address to a string
         inet_ntop(AF_INET, &peer_address.sin_addr, peer_ip_address, sizeof(peer_ip_address));
+        // Format the peer's IP address and port number into the peer buffer.
         snprintf(peer, peerlen, "%s:%u", peer_ip_address, ntohs(peer_address.sin_port));
     }
 
