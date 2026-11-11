@@ -115,24 +115,27 @@ tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
 
 tp_conn *tp_connect(const char *host, uint16_t port)
 {
-    struct addrinfo address_query_hints;
+    struct addrinfo address_query_hints = {0};
     struct addrinfo *resolved_addresses = NULL;
-    memset(&address_query_hints, 0, sizeof(address_query_hints));
+    // Set the address family to allow for both IPv4 and IPv6 addresses, and set the socket type to stream (TCP).
     address_query_hints.ai_family = AF_UNSPEC;
     address_query_hints.ai_socktype = SOCK_STREAM;
 
     char port_number_string[6];
     snprintf(port_number_string, sizeof(port_number_string), "%u", port);
 
+    // Use getaddrinfo to resolve the host and port into a list of address structures.
     if (getaddrinfo(host, port_number_string, &address_query_hints, &resolved_addresses) != 0) return NULL;
 
     int connection_socket_file_descriptor = -1;
     struct addrinfo *address_candidate;
 
+    // Loop over every resolved address and try to create a socket and connect to it. If successful, break out of the loop.
     for (address_candidate = resolved_addresses; address_candidate != NULL; address_candidate = address_candidate->ai_next) {
         connection_socket_file_descriptor = socket(address_candidate->ai_family, address_candidate->ai_socktype, address_candidate->ai_protocol);
         if (connection_socket_file_descriptor < 0) continue;
 
+        // Try to connect to the current address candidate. If successful, break out of the loop.
         if (connect(connection_socket_file_descriptor, address_candidate->ai_addr, address_candidate->ai_addrlen) == 0) break;
 
         close(connection_socket_file_descriptor);
@@ -155,12 +158,12 @@ tp_conn *tp_connect(const char *host, uint16_t port)
 
 int tp_send_all(tp_conn *c, const void *buf, size_t n)
 {
-    const uint8_t *bytes_to_send = buf;
     size_t bytes_sent = 0;
 
     while (bytes_sent < n) {
-        ssize_t send_result = send(c->socket_file_descriptor, bytes_to_send + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
-
+        // MSG_NOSIGNAL prevents the sending of a SIGPIPE signal if the peer has closed the connection, which would otherwise terminate the process.
+        ssize_t send_result = send(c->socket_file_descriptor, buf + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
+        
         if (send_result < 0) {
             if (errno == EINTR) continue;
             return -1;
@@ -168,6 +171,7 @@ int tp_send_all(tp_conn *c, const void *buf, size_t n)
 
         if (send_result == 0) return -1;
 
+        // send_result is the number of bytes sent in this iteration, so we add it to bytes_sent to keep track of the total number of bytes sent.
         bytes_sent += (size_t)send_result;
     }
 
