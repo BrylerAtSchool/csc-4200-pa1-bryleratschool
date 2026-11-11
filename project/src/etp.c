@@ -13,14 +13,29 @@
  */
 #include "etp.h"
 
+#include <arpa/inet.h>
 #include <openssl/evp.h>
+#include <string.h>
 
 int etp_send(tp_conn *c, uint8_t type, uint8_t status, const void *payload, uint32_t len)
 {
-    (void)c; (void)type; (void)status; (void)payload; (void)len;
-    /* TODO: build the 8-byte header (LENGTH in network byte order) and send
-     * header and payload with tp_send_all. */
-    return -1;
+    if (len > ETP_MAX_LEN || (len > 0 && payload == NULL)) return -1;
+
+    uint8_t header[ETP_HEADER_SIZE];
+    // host to network length
+    uint32_t network_len = htonl(len);
+
+    header[0] = ETP_VERSION;
+    header[1] = type;
+    header[2] = status;
+    header[3] = 0;
+    // Copy the length bits into the header
+    memcpy(header + 4, &network_len, sizeof(network_len));
+    
+    if (tp_send_all(c, header, sizeof(header)) < 0) return -1;
+    if (len > 0 && tp_send_all(c, payload, len) < 0) return -1;
+
+    return 0;
 }
 
 int etp_read_header(tp_conn *c, etp_header *h)
