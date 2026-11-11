@@ -35,6 +35,7 @@ struct tp_conn
     int socket_file_descriptor;
 };
 
+// Set up a TCP listening socket on a local address and port.
 tp_listener *tp_listen(const char *bind_addr, uint16_t port)
 {
     // AF_INET specifies IPv4 (address family internet); SOCK_STREAM specifies a reliable, ordered, two-way byte stream (TCP)
@@ -92,7 +93,7 @@ tp_listener *tp_listen(const char *bind_addr, uint16_t port)
     return listener;
 }
 
-// Wait for incoming client connections and, when one is ready, return a connection object for it.
+// Wait for a client to connect to a listener socket and return a connection object for communicating with it.
 tp_conn *tp_accept(tp_listener *l, char *peer, size_t peerlen)
 {
     // The address of the connecting peer will be stored in this struct, and its length will be stored in peer_address_length.
