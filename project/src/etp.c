@@ -23,14 +23,14 @@ int etp_send(tp_conn *c, uint8_t type, uint8_t status, const void *payload, uint
 
     uint8_t header[ETP_HEADER_SIZE];
     // host to network length
-    uint32_t network_len = htonl(len);
+    uint32_t network_length = htonl(len);
 
     header[0] = ETP_VERSION;
     header[1] = type;
     header[2] = status;
     header[3] = 0;
     // Copy the length bits into the header
-    memcpy(header + 4, &network_len, sizeof(network_len));
+    memcpy(header + 4, &network_length, sizeof(network_length));
     
     if (tp_send_all(c, header, sizeof(header)) < 0) return -1;
     if (len > 0 && tp_send_all(c, payload, len) < 0) return -1;
@@ -40,8 +40,23 @@ int etp_send(tp_conn *c, uint8_t type, uint8_t status, const void *payload, uint
 
 int etp_read_header(tp_conn *c, etp_header *h)
 {
-    (void)c; (void)h;
-    /* TODO: tp_recv_exact 8 bytes, then decode each field. */
+    if (h == NULL) return -1;
+
+    uint8_t header[ETP_HEADER_SIZE];
+    int result = tp_recv_exact(c, header, sizeof(header));
+
+    // If we didn't get a full response back, return.
+    if (result != 1) return result;
+
+    uint32_t network_length;
+    memcpy(&network_length, header + 4, sizeof(network_length));
+    
+    h->version = header[0];
+    h->type = header[1];
+    h->status = header[2];
+    h->reserved = header[3];
+    h->length = ntohl(network_length);
+
     return -1;
 }
 
