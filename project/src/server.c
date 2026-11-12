@@ -31,6 +31,69 @@ static void handle_list(tp_conn *c){
 }
 //TODO: logging one line per response on stdout
 
+static void handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
+    if (etp_valid_name(name, len) == 0){
+        etp_send(c, ETP_ERROR, ETP_E_BAD_NAME, "bad name", strlen("bad name"));
+        return;
+    }
+    char path[4096];
+    //build text into path
+    snprintf(path, sizeof path, "%s/%.*s", g_root, (int)len, (const char *)name);
+
+    struct stat st;
+    if(lstat(path, &st) != 0 || !S_ISREG(st.st_mode)){
+        etp_send(c, ETP_ERROR, ETP_E_NOT_FOUND, "no regular file", strlen("no regular file"));
+        return;
+    }
+    //checks if too big for one message
+    if (st.st_size > (off_t)ETP_MAX_LEN){
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "file too large", strlen("file too large"));
+        return;
+    }
+    //open the file
+    FILE *f = fopen(path, "rb");
+    if (f == NULL){
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "couldn't open file", strlen("couldn't open file"));
+        return;
+    }
+
+    //get memory from file contents
+    uint8_t *data = malloc(st.st_size + 1);
+    if (data == NULL){
+        fclose(f);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "couldn't retrieve contents", strlen("couldn't retrieve contents"));
+        return;
+    }
+    //read file and close
+    size_t got = fread(data, 1, st.st_size, f);
+    fclose(f);
+    if (got != (size_t)st.st_size){
+        free(data);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return;
+    }
+    etp_send(c, ETP_GET_OK, 0, data, (uint32_t)st.st_size);
+    free(data);
+}
+
+static void handle_put(tp_conn *c, const uint8_t *payload, uint32_t len){
+    //check name length
+    if (len < 2){
+        etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "payload too short", strlen("payload too short"));
+        return;
+    }
+
+    //first 2 btes of name length
+    uint32_t namelen = ((uint32_t)payload[0] << 8) | payload[1];
+    if (namelen > len - 2){
+        etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "payload too long", strlen("payload too long"));
+        return;
+    }
+    //split payload
+    const uint8_t *name = payload + 2;
+
+}
+
 /* Serve one client from HELLO to BYE (Specification, Sections 5-8)*/
 static void handle_session(tp_conn *c, const char *peer)
 {
@@ -105,8 +168,12 @@ static void handle_session(tp_conn *c, const char *peer)
             }
             handle_list(c);
         }
+        //GET Block
+        if (h.type == ETP_GET){
+            handle_get(c, payload, h.length);
+        }
+        //TODO: add PUT
 
-        //TODO: add GET and PUT
 
         if (h.type == ETP_BYE){
             //TODO: BAD_REQUEST for non-empty payload
