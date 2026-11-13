@@ -46,7 +46,7 @@ static int read_response(tp_conn *c, etp_header *h, uint8_t **payload)
     if (h->length != 0)
     {
         *payload = malloc(h->length);
-        
+
         // Receive the pahyload size
         if (*payload == NULL || tp_recv_exact(c, *payload, h->length) != 1)
         {
@@ -58,6 +58,54 @@ static int read_response(tp_conn *c, etp_header *h, uint8_t **payload)
 
     // success
     return 0;
+}
+
+static int get_response(tp_conn *c, uint8_t expected, etp_header *h, uint8_t **payload)
+{
+    if (read_response(c, h, payload) < 0)
+        return EXIT_FAILURE_;
+
+    if (h->type == ETP_ERROR)
+    {
+        fprintf(stderr, "etp-client: server error %u: ", h->status);
+        if (h->length != 0)
+            (void)fwrite(*payload, 1, h->length, stderr);
+        fputc('\n', stderr);
+        free(*payload);
+        *payload = NULL;
+        return EXIT_SERVER_ERROR;
+    }
+
+    if (h->type != expected || h->status != 0)
+    {
+        free(*payload);
+        *payload = NULL;
+        return EXIT_FAILURE_;
+    }
+    return EXIT_OK;
+}
+
+// Send BYE message to server
+static int finish_session(tp_conn *c)
+{
+    etp_header h;
+    uint8_t *payload = NULL;
+
+    if (etp_send(c, ETP_BYE, 0, NULL, 0) < 0)
+        return EXIT_FAILURE_;
+
+    // Get the BYE_OK response
+    int rc = get_response(c, ETP_BYE_OK, &h, &payload);
+    if (rc != EXIT_OK)
+        return rc;
+
+    free(payload);
+
+    // make sure no payload is returned.
+    if (h.length != 0)
+        return EXIT_FAILURE_;
+
+    return EXIT_OK;
 }
 
 /* Perform one session and return the exit status.
@@ -92,7 +140,7 @@ static int run(const char *host, uint16_t port, const char *name,
 
     etp_header h;
     uint8_t *payload = NULL;
-    
+
     // Read the server's response
     if (read_response(c, &h, &payload) < 0)
         goto done;
@@ -110,6 +158,34 @@ static int run(const char *host, uint16_t port, const char *name,
     {
         free(payload);
         goto done;
+    }
+
+    if (strcmp(cmd, "list") == 0)
+    {
+        // Send a LIST request to server
+        if (etp_send(c, ETP_LIST, 0, NULL, 0) < 0)
+            goto done;
+
+        // Wait for server LIST_OK response
+        int rc = get_response(c, ETP_LIST_OK, &h, &payload);
+        if (rc != EXIT_OK)
+        {
+            result = rc;
+            goto done;
+        }
+
+        // Print response
+        if (h.length != 0)
+            (void)fwrite(payload, 1, h.length, stdout);
+        
+        free(payload);
+
+        // Send BYE
+        result = finish_session(c);
+    }
+    else
+    {
+        fprintf(stderr, "client: command not implemented yet\n");
     }
 
     free(payload);
