@@ -9,6 +9,7 @@ _Your modules and what calls what. A small diagram (ASCII is fine) or a list:
 which file holds the protocol (encode/decode), which holds the transport, which
 holds the server's session logic, which holds the client._
 
+ ```
           client                                  server
 +---------------------------+    +----------------------------------------+
 | client.c                  |    | server.c                               |
@@ -33,6 +34,8 @@ holds the server's session logic, which holds the client._
      +------------------------------+-----------------------------+
                                     |
                              TCP byte stream
+```
+ASCII Diagram
 
 ## 2. The transport seam
 
