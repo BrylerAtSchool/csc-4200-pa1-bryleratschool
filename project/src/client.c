@@ -31,6 +31,45 @@ enum
     EXIT_DIGEST = 3
 };
 
+static int read_file(const char *path, uint8_t **data, size_t *len)
+{
+    // Open file in read moede
+    FILE *f = fopen(path, "rb");
+
+    if (f == NULL)
+        return -1;
+
+    // Move the pointer to the end of the file to get its size
+    if (fseek(f, 0, SEEK_END) != 0)
+    {
+        fclose(f);
+        return -1;
+    }
+
+    long size = ftell(f);
+
+    if (size < 0 || fseek(f, 0, SEEK_SET) != 0 || (unsigned long)size > ETP_MAX_LEN)
+    {
+        fclose(f);
+        return -1;
+    }
+
+    *len = (size_t)size;
+    *data = *len ? malloc(*len) : NULL;
+
+    // Read file contents into memory and check that everything succeeded
+    if (*len && (*data == NULL || fread(*data, 1, *len, f) != *len))
+    {
+        free(*data);
+        *data = NULL;
+        fclose(f);
+        return -1;
+    }
+
+    fclose(f);
+    return 0;
+}
+
 static int write_file(const char *path, const uint8_t *data, size_t len)
 {
     FILE *f = fopen(path, "wb");
@@ -174,7 +213,90 @@ static int run(const char *host, uint16_t port, const char *name,
         free(payload);
         goto done;
     }
+    else if (strcmp(cmd, "put") == 0)
+    {
+        const char *local = args[0];
+        const char *remote = args[1];
 
+        size_t remote_len = strlen(remote);
+        uint8_t *file_data = NULL;
+        size_t file_len = 0;
+
+        // ensure valid filename and read the local file into memory
+        if (!etp_valid_name((const uint8_t *)remote, remote_len) ||
+            read_file(local, &file_data, &file_len) < 0)
+        {
+            fprintf(stderr, "etp-client: invalid name or unreadable local file\n");
+            goto done;
+        }
+
+        // Total request size
+        size_t request_len = 2 + remote_len + file_len;
+
+        if (request_len > ETP_MAX_LEN)
+        {
+            free(file_data);
+            fprintf(stderr, "etp-client: file too large\n");
+            goto done;
+        }
+
+        uint8_t *request = malloc(request_len);
+        if (request == NULL)
+        {
+            free(file_data);
+            goto done;
+        }
+
+        // Store remote filename in the first two bytes
+        request[0] = (uint8_t)(remote_len >> 8);
+        request[1] = (uint8_t)remote_len;
+
+        // Copy remote filename
+        memcpy(request + 2, remote, remote_len);
+
+        // Copy file contents immediately after the filename
+        if (file_len)
+            memcpy(request + 2 + remote_len, file_data, file_len);
+
+        // Calculate the has of the file contents and send the PUT request to the server
+        uint8_t digest[32];
+        if (etp_sha256(file_data, file_len, digest) < 0 || etp_send(c, ETP_PUT, 0, request, (uint32_t)request_len) < 0)
+        {
+            free(request);
+            free(file_data);
+            goto done;
+        }
+
+        free(request);
+        free(file_data);
+
+        // Wait for the server to respond with PUT_OK.
+        int rc = get_response(c, ETP_PUT_OK, &h, &payload);
+        if (rc != EXIT_OK)
+        {
+            result = rc;
+            goto done;
+        }
+
+        // verify the server returned a matching hash calculated from the original file
+        if (h.length != 32 || memcmp(payload, digest, 32) != 0)
+        {
+            free(payload);
+            result = EXIT_DIGEST;
+            goto done;
+        }
+
+        // Print the SHA-256 hash as a hexadecimal string
+        for (size_t i = 0; i < 32; i++)
+            printf("%02x", digest[i]);
+
+        putchar('\n');
+
+        free(payload);
+
+        // Send BYE
+        result = finish_session(c);
+    }
     else if (strcmp(cmd, "get") == 0)
     {
         // get the filenames
@@ -190,7 +312,7 @@ static int run(const char *host, uint16_t port, const char *name,
             goto done;
         }
 
-        // send a GET request to the server with the remote filename 
+        // send a GET request to the server with the remote filename
         if (etp_send(c, ETP_GET, 0, remote, (uint32_t)remote_len) < 0)
             goto done;
 
