@@ -85,11 +85,19 @@ _How do fatal and non-fatal errors differ in your code? What happens when a clie
 disconnects in the middle of a GET of a large file? (C: how did you deal with
 SIGPIPE?) How does your client choose its exit code?_
 
+
+The code distinguishes fatal and non-fatal errors: fatal errors, such as BAD_VERSION, TOO_LARGE, and NOT_READY, send an ERROR response before closing the connection with break, while non-fatal errors send an ERROR response and allow the session to continue. If a client disconnects halfway through a large GET, the server stops sending, frees any allocated resources, and closes the connection without attempting another response. To prevent a broken connection from terminating the server, I ignore SIGPIPE and use MSG_NOSIGNAL; the client determines its exit code based on whether the operation completed successfully or encountered an error.
+
+
 ## 6. Threat model
 
 _One paragraph. Who could attack an ETP/1 server, and how? Name one attack your
 server resists (and how), and one it does not. Chapter 5 §5.9 and the
 specification's Security Considerations are good starting points._
+
+
+Anyone who can reach the server over the network could attempt to exploit it, including by sending malicious requests, exhausting memory, or overwriting files. The server resists path traversal attacks because etp_valid_name rejects filenames containing / or beginning with ., and it checks files with lstat and S_ISREG to prevent symlink escapes. It also validates LENGTH before allocating memory to prevent oversized payloads from exhausting memory. However, it does not protect against eavesdropping or tampering because there is no encryption or authentication, and anyone with access to the server can potentially overwrite existing files using PUT.
+
 
 ## 7. Testing
 
