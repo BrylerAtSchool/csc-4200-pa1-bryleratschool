@@ -9,6 +9,31 @@ _Your modules and what calls what. A small diagram (ASCII is fine) or a list:
 which file holds the protocol (encode/decode), which holds the transport, which
 holds the server's session logic, which holds the client._
 
+          client                                  server
++---------------------------+    +----------------------------------------+
+| client.c                  |    | server.c                               |
+|  run(): HELLO -> command  |    |  main(): args, ignore SIGPIPE, listen  |
+|    -> BYE, exit code 0-3  |    |    accept loop                         |
+|                           |    |      | one detached thread per client  |
+|                           |    |      v                                 |
+|                           |    |  handle_session(): read header,        |
+|                           |    |    ETP 8.1 checks, HELLO / BYE,        |
+|                           |    |    handle_list / get / put <-> --root  |
+|                           |    |    log_response -> stdout (locked)     |
++-------------+-------------+    +-------------------+--------------------+
+              |                                      |
+              v        both programs                 v
+     +------------------------------------------------------------+
+     | etp.c  (framing)                                           |
+     |   etp_send, etp_read_header, etp_valid_name, etp_sha256    |
+     +------------------------------------------------------------+
+     | transport_tcp.c  (the seam)                                |
+     |   tp_listen, tp_accept, tp_connect,                        |
+     |   tp_send_all, tp_recv_exact, tp_close                     |
+     +------------------------------+-----------------------------+
+                                    |
+                             TCP byte stream
+
 ## 2. The transport seam
 
 _Which file is your transport? List the six operations as you implemented them.
