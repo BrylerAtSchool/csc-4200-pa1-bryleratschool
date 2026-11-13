@@ -57,7 +57,7 @@ int etp_read_header(tp_conn *c, etp_header *h)
     h->reserved = header[3];
     h->length = ntohl(network_length);
 
-    return -1;
+    return 1; //changed from return -1 to 1 (originally closed client connection when testing)
 }
 
 int etp_valid_name(const uint8_t *name, size_t len)

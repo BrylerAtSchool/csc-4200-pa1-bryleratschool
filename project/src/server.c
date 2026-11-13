@@ -16,25 +16,87 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <signal.h>
 #include <string.h>
+#include <time.h>
 #include <pthread.h>
+#include <unistd.h>
 #include "etp.h"
 #include "transport.h"
 
 static const char *g_root;
-
-//sends empty listing
-static void handle_list(tp_conn *c){
-    etp_send(c, ETP_LIST_OK, 0, NULL, 0);
-    //TODO: still need to read root, filter, solrt, and build lines
+//stops two sessions from printing over each other's log lines
+static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
+//Prints one line per response (time, peer, type, status, and length)
+static void log_response(const char *peer, uint8_t type, uint8_t status, uint32_t length){
+    //type name outside HELLO - BYB
+    static const char *names[] = {"HELLO", "LIST", "GET", "PUT", "BYE"};
+    char tname[8];
+    if (type >= ETP_HELLO && type <= ETP_BYE)
+        snprintf(tname, sizeof tname, "%s", names[type - 1]);
+    else
+        snprintf(tname, sizeof tname, "0x%02X", type);
+    
+    //get local time
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+    char when[32];
+    strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%S", &tm);
+    //lock
+    pthread_mutex_lock(&g_log_lock);
+    printf("%s.%03ld %s %s %u %u\n", when, ts.tv_nsec / 1000000, peer, tname, status, length);
+    //flush 
+    fflush(stdout);
+    //unlock
+    pthread_mutex_unlock(&g_log_lock);
 }
-//TODO: logging one line per response on stdout
 
-static void handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
+//lists only valid names that are regular files
+static int handle_list(tp_conn *c){
+    //read every root entry sorted by name
+    struct dirent **names;
+    int n = scandir(g_root, &names, NULL, alphasort);
+    if (n < 0){
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "root not read", strlen("root not read"));
+        return ETP_E_SERVER_ERROR;
+    }
+    //leave room for the reply
+    char *out = malloc((size_t)n * 86 + 1);
+    size_t used = 0;
+
+    for (int i = 0; i < n; i++){
+        const char *name = names[i]->d_name;
+        //only valid ETP names kept
+        if (out != NULL && etp_valid_name((const uint8_t *)name, strlen(name)) == 1){
+            char path[4096];
+            snprintf(path, sizeof path, "%s/%s", g_root, name);
+            struct stat st;
+            if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)){
+                used += sprintf(out + used, "%s\t%lld\n", name, (long long)st.st_size);
+            }
+        }
+        free(names[i]);
+    }
+    free(names);
+
+    if (out == NULL || used > ETP_MAX_LEN){
+        free(out);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+    etp_send(c, ETP_LIST_OK, 0, out, (uint32_t)used);
+    free(out);
+    return 0;
+}
+
+//checks order (6.3 in etp1 specification)
+static int handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
     if (etp_valid_name(name, len) == 0){
         etp_send(c, ETP_ERROR, ETP_E_BAD_NAME, "bad name", strlen("bad name"));
-        return;
+        return ETP_E_BAD_NAME;
     }
     char path[4096];
     //build text into path
@@ -43,18 +105,18 @@ static void handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
     struct stat st;
     if(lstat(path, &st) != 0 || !S_ISREG(st.st_mode)){
         etp_send(c, ETP_ERROR, ETP_E_NOT_FOUND, "no regular file", strlen("no regular file"));
-        return;
+        return ETP_E_NOT_FOUND;
     }
     //checks if too big for one message
     if (st.st_size > (off_t)ETP_MAX_LEN){
         etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "file too large", strlen("file too large"));
-        return;
+        return ETP_E_SERVER_ERROR;
     }
     //open the file
     FILE *f = fopen(path, "rb");
     if (f == NULL){
         etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "couldn't open file", strlen("couldn't open file"));
-        return;
+        return ETP_E_SERVER_ERROR;
     }
 
     //get memory from file contents
@@ -62,7 +124,7 @@ static void handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
     if (data == NULL){
         fclose(f);
         etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "couldn't retrieve contents", strlen("couldn't retrieve contents"));
-        return;
+        return ETP_E_SERVER_ERROR;
     }
     //read file and close
     size_t got = fread(data, 1, st.st_size, f);
@@ -70,35 +132,86 @@ static void handle_get(tp_conn *c, const uint8_t *name, uint32_t len){
     if (got != (size_t)st.st_size){
         free(data);
         etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
-        return;
+        return ETP_E_SERVER_ERROR;
     }
     etp_send(c, ETP_GET_OK, 0, data, (uint32_t)st.st_size);
     free(data);
+    return 0;
 }
 
-static void handle_put(tp_conn *c, const uint8_t *payload, uint32_t len){
+static int handle_put(tp_conn *c, const uint8_t *payload, uint32_t len){
     //check name length
     if (len < 2){
         etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "payload too short", strlen("payload too short"));
-        return;
+        return ETP_E_BAD_REQUEST;
     }
 
     //first 2 btes of name length
     uint32_t namelen = ((uint32_t)payload[0] << 8) | payload[1];
     if (namelen > len - 2){
-        etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "payload too long", strlen("payload too long"));
-        return;
+        etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "bad name length", strlen("bad name length"));
+        return ETP_E_BAD_REQUEST;
     }
     //split payload
     const uint8_t *name = payload + 2;
+    const uint8_t *data = payload + 2 + namelen;
+    uint32_t datalen = len - 2 - namelen;
 
+    if (etp_valid_name(name, namelen) == 0){
+        etp_send(c, ETP_ERROR, ETP_E_BAD_NAME, "invalid name", strlen("invalid name"));
+        return ETP_E_BAD_NAME;
+    }
+
+    //digest of DATA
+    uint8_t digest[32];
+    if (etp_sha256(data, datalen, digest) !=0){
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+
+    //final path
+    char path[4096];
+    snprintf(path, sizeof path, "%s/%.*s", g_root,(int)namelen, (const char *)name);
+
+    //temporary file
+    char temp[4096];
+    snprintf(temp, sizeof temp, "%s/.etp-XXXXXX", g_root);
+    int fd = mkstemp(temp);
+    if (fd < 0){
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+
+    FILE *f = fdopen(fd, "wb");
+    if (f == NULL){
+        close(fd);
+        remove(temp);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+
+    //write data and close
+    size_t written = fwrite(data, 1, datalen, f);
+    if (fclose(f) != 0 || written != datalen){
+        remove(temp);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+
+    //move it into place
+    if (rename(temp, path) != 0){
+        remove(temp);
+        etp_send(c, ETP_ERROR, ETP_E_SERVER_ERROR, "server error", strlen("server error"));
+        return ETP_E_SERVER_ERROR;
+    }
+
+    etp_send(c, ETP_PUT_OK, 0, digest, 32);
+    return 0;
 }
 
-/* Serve one client from HELLO to BYE (Specification, Sections 5-8)*/
+//fatal errors break which ends the session where non fatal errors continue the next request
 static void handle_session(tp_conn *c, const char *peer)
 {
-    (void)peer;
-    //
     int ready = 0;
     for(;;){
         etp_header h;
@@ -108,11 +221,13 @@ static void handle_session(tp_conn *c, const char *peer)
         //Checks if version is 1 (fatal)
         if (h.version != ETP_VERSION){
             etp_send(c, ETP_ERROR, ETP_E_BAD_VERSION, "bad version", strlen("bad version"));
+            log_response(peer, h.type, ETP_E_BAD_VERSION, h.length);
             break;
         }    
         //Checks if length is too large (fatal)
         if (h.length > ETP_MAX_LEN){
             etp_send(c, ETP_ERROR, ETP_E_TOO_LARGE, "too large", strlen("too large"));
+            log_response(peer, h.type, ETP_E_TOO_LARGE, h.length);
             break;
         }    
         //reads payload, adds 1 so malloc(0) never happens
@@ -126,12 +241,14 @@ static void handle_session(tp_conn *c, const char *peer)
         //checks for unknown type
         if (h.type < ETP_HELLO || h.type > ETP_BYE){
             etp_send(c, ETP_ERROR, ETP_E_BAD_TYPE, "bad type", strlen("bad type"));
+            log_response(peer, h.type, ETP_E_BAD_TYPE, h.length);
             free(payload);
             continue;
         }
         //checks for anything but HELLO before HELLO (fatal)
         if (ready == 0 && h.type != ETP_HELLO){
             etp_send(c, ETP_ERROR, ETP_E_NOT_READY, "say hello first", strlen("say hello first"));
+            log_response(peer, h.type, ETP_E_NOT_READY, h.length);
             free(payload);
             break;
         }
@@ -139,6 +256,7 @@ static void handle_session(tp_conn *c, const char *peer)
         if (h.type == ETP_HELLO){
             if (ready == 1){
                 etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "already said hello", strlen("already said hello"));
+                log_response(peer, h.type, ETP_E_BAD_REQUEST, h.length);
                 free(payload);
                 continue;
             }
@@ -154,41 +272,54 @@ static void handle_session(tp_conn *c, const char *peer)
             }
             if (name_ok == 0){
                 etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "bad request", strlen("bad request"));
+                log_response(peer, h.type, ETP_E_BAD_REQUEST, h.length);
                 free(payload);
                 continue;
             }
             etp_send(c, ETP_HELLO_OK, 0, "ETP Server", strlen("ETP Server"));
+            log_response(peer, h.type, 0, h.length);
+
             ready = 1;
         }
         if (h.type == ETP_LIST){
             if (h.length != 0){
                 etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "bad request", strlen("bad request"));
+                log_response(peer, h.type, ETP_E_BAD_REQUEST, h.length);
                 free(payload);
                 continue;
             }
-            handle_list(c);
+            int st = handle_list(c);
+            log_response(peer, h.type, st, h.length);
         }
-        //GET Block
+        //GET 
         if (h.type == ETP_GET){
-            handle_get(c, payload, h.length);
+            int st = handle_get(c, payload, h.length);
+            log_response(peer, h.type, st, h.length);
+
         }
-        //TODO: add PUT
-
-
+        //PUT
+        if (h.type == ETP_PUT){
+            int st = handle_put(c, payload, h.length);
+            log_response(peer, h.type, st, h.length);
+        }
+        //BYE
         if (h.type == ETP_BYE){
-            //TODO: BAD_REQUEST for non-empty payload
+            if (h.length != 0){
+                etp_send(c, ETP_ERROR, ETP_E_BAD_REQUEST, "bad request", strlen("bad request"));
+                log_response(peer, h.type, ETP_E_BAD_REQUEST, h.length);
+
+                free(payload);
+                continue;
+            }
             etp_send(c, ETP_BYE_OK, 0, NULL, 0);
+            log_response(peer, h.type, 0, h.length);
             free(payload);
             break;
         }
-        //for debugging
-        fprintf(stderr, "type %d length %u\n", h.type, h.length);
         free(payload);
         
     }
     tp_close(c);
-
-    
 }
 
 static void usage(void)
@@ -196,7 +327,7 @@ static void usage(void)
     fprintf(stderr, "usage: etp-server --port PORT --root DIR [--bind ADDR]\n");
     exit(2);
 }
-
+//peer is copied because main's buffer is reused by next accept
 struct session_arg 
 {
     tp_conn *c;
@@ -254,8 +385,6 @@ int main(int argc, char **argv)
         tp_conn *c = tp_accept(l, peer, sizeof peer);
         if (c == NULL)
             continue;
-        /* TODO: serve this session so that a stalled client cannot delay any
-         * other (Specification, Section 9: Concurrency). */
         
          //one detached thread per session
         struct session_arg *a = malloc(sizeof(struct session_arg));
