@@ -44,11 +44,29 @@ Confirm that no other file calls the socket API. In two or three sentences: what
 would you have to change, and what would stay the same, when you swap TCP for your
 PA2 transport in the final project?_
 
+
+transport_tcp.c is the transport file, containing six tp functions covering
+operations listen, accept, connect, send all, recv exact, and close. No other
+file calls socket API which was confirmed with a grep over src/ and include/
+for three socket headers and socket calls in section 11, excluding transport.
+Command ran:
+```
+grep -nE '#include *<(sys/socket|netinet/in|netdb)\.h>|\b(socket|bind|listen|accept|connect|send|sendto|sendmsg|recv|recvfrom|recvmsg|setsockopt|shutdown|getaddrinfo)\s*\(' src/*.c include/*.h | grep -v '/transport'
+```
+
+
+When swapping TCP over for the PA2 transport, transport.c would be replaced with a new transport module, using the same six tp functions with the PA2 ETP-T protocol, and an updated Makefile. The files server.c, client.c, and etp.c would stay the same since they interact with the transport through the same interface. The ETP-T would need to handle reliability and distinguish individual client connections to preserve the server's concurrency design.
+
+
 ## 3. Framing
 
 _How does your code read one ETP message from a byte stream? Where and how do you
 handle a header that arrives in pieces, or two messages that arrive in one read?
 Where do you check VERSION and LENGTH, and why before reading the payload?_
+
+
+The code reads each ETP message by using an exact-read function first to collect the 8 bytes of the header and handles cases where the header may arrive in several pieces. It checks the VERSION and LENGTH fields before allocating memory or reading the payload, preventing invalid versions or excessively large messages from causing issues. Once the header is validated it reads LENGTH bytes exactly for the payload, with any additional messages arriving in the same read, being available for the next message. The header is built using htonl and mecpy to ensure consistent byte order.
+
 
 ## 4. Concurrency
 
@@ -56,6 +74,10 @@ _Threads, processes or an event loop? What happens to everyone else when one
 client stalls half-way through a header? Is any state shared between sessions
 (for example, two clients PUT and GET the same file at once), and how is it
 protected?_
+
+
+The server uses a detached pthread per client connection, allowing each session to use simple blocking code without preventing other clients from being server if one stalls halway through a header. The client's peer information is copied into a session_arg structure because the original buffer in main is reused for subsequesnt connections. The only state that is shared is stdout, which is protected by g_log_lock (PUT operations also use unique temporary files with mkstemp and rename them into place so concurrent GET requests never receive partially written files). However, this means that every connected client (including idle ones) consumes a thread. 
+
 
 ## 5. Errors and disconnects
 
