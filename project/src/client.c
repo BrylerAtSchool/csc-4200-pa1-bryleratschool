@@ -31,6 +31,21 @@ enum
     EXIT_DIGEST = 3
 };
 
+static int write_file(const char *path, const uint8_t *data, size_t len)
+{
+    FILE *f = fopen(path, "wb");
+    if (f == NULL)
+        return -1;
+
+    // write the data to the file and verify that it was written
+    int ok = len == 0 || fwrite(data, 1, len, f) == len;
+
+    if (fclose(f) != 0)
+        ok = 0;
+
+    return ok ? 0 : -1;
+}
+
 // Read header and receive payload
 static int read_response(tp_conn *c, etp_header *h, uint8_t **payload)
 {
@@ -160,6 +175,47 @@ static int run(const char *host, uint16_t port, const char *name,
         goto done;
     }
 
+    else if (strcmp(cmd, "get") == 0)
+    {
+        // get the filenames
+        const char *remote = args[0];
+        const char *local = args[1];
+
+        size_t remote_len = strlen(remote);
+
+        // ensure valid name
+        if (!etp_valid_name((const uint8_t *)remote, remote_len))
+        {
+            fprintf(stderr, "client: invalid remote name\n");
+            goto done;
+        }
+
+        // send a GET request to the server with the remote filename 
+        if (etp_send(c, ETP_GET, 0, remote, (uint32_t)remote_len) < 0)
+            goto done;
+
+        // Wait for the ETP_GET_OK response
+        int rc = get_response(c, ETP_GET_OK, &h, &payload);
+        if (rc != EXIT_OK)
+        {
+            result = rc;
+            goto done;
+        }
+
+        // Write the received file data to our local file
+        if (write_file(local, payload, h.length) < 0)
+        {
+            fprintf(stderr, "client: could not write local file\n");
+            free(payload);
+            goto done;
+        }
+
+        free(payload);
+
+        // Send BYE
+        result = finish_session(c);
+    }
+
     if (strcmp(cmd, "list") == 0)
     {
         // Send a LIST request to server
@@ -177,7 +233,7 @@ static int run(const char *host, uint16_t port, const char *name,
         // Print response
         if (h.length != 0)
             (void)fwrite(payload, 1, h.length, stdout);
-        
+
         free(payload);
 
         // Send BYE
