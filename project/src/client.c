@@ -1,9 +1,9 @@
 /*
  * client.c -- ETP/1 client. CSC 4200/5200 PA1 starter (C).
  *
- *     ./etp-client --host HOST --port PORT --name NAME list
- *     ./etp-client --host HOST --port PORT --name NAME get REMOTE LOCAL
- *     ./etp-client --host HOST --port PORT --name NAME put LOCAL REMOTE
+ *     ./client --host HOST --port PORT --name NAME list
+ *     ./client --host HOST --port PORT --name NAME get REMOTE LOCAL
+ *     ./client --host HOST --port PORT --name NAME put LOCAL REMOTE
  *
  * Argument handling is done for you. Everything marked TODO is yours.
  * This file must not call the socket API: use transport.h (the seam).
@@ -121,7 +121,7 @@ static int get_response(tp_conn *c, uint8_t expected, etp_header *h, uint8_t **p
 
     if (h->type == ETP_ERROR)
     {
-        fprintf(stderr, "etp-client: server error %u: ", h->status);
+        fprintf(stderr, "client: server error %u: ", h->status);
         if (h->length != 0)
             (void)fwrite(*payload, 1, h->length, stderr);
         fputc('\n', stderr);
@@ -162,59 +162,134 @@ static int finish_session(tp_conn *c)
     return EXIT_OK;
 }
 
-/* Perform one session and return the exit status.
- * TODO: connect; HELLO with name; the one command; BYE; wait for the server
- * to close; close. `list` prints the LIST_OK payload exactly, `put` prints the
- * 64-hex-digit digest, and every diagnostic goes to stderr. */
+// Perform one session and return the exit status
 static int run(const char *host, uint16_t port, const char *name,
                const char *cmd, char **args)
 {
-    (void)cmd;
-    (void)args;
-
-    size_t n = strlen(name);
-    if (n <= 0 || n > 32)
+    // The server accepts client names containing 1-32 bytes.
+    size_t name_len = strlen(name);
+    if (name_len < 1 || name_len > 32)
     {
-        fprintf(stderr, "client: invalid client name\n");
+        fprintf(stderr, "client: client name must contain 1 to 32 bytes\n");
         return EXIT_FAILURE_;
     }
+    for (size_t i = 0; i < name_len; i++)
+    {
+        unsigned char ch = (unsigned char)name[i];
+        if (ch < 0x21 || ch > 0x7e)
+        {
+            fprintf(stderr, "client: client name must be printable ASCII\n");
+            return EXIT_FAILURE_;
+        }
+    }
 
-    // connect to the server via TCP.
     tp_conn *c = tp_connect(host, port);
     if (c == NULL)
     {
-        fprintf(stderr, "client: could not connect\n");
+        fprintf(stderr, "client: could not connect to server\n");
         return EXIT_FAILURE_;
     }
 
     int result = EXIT_FAILURE_;
-    // Send a hello message with our name
-    if (etp_send(c, ETP_HELLO, 0, name, (uint32_t)n) < 0)
+    // Start the session by sending HELLO with the requested client name
+    if (etp_send(c, ETP_HELLO, 0, name, (uint32_t)name_len) < 0)
+    {
+        fprintf(stderr, "client: failed to send HELLO\n");
         goto done;
+    }
 
     etp_header h;
     uint8_t *payload = NULL;
-
-    // Read the server's response
-    if (read_response(c, &h, &payload) < 0)
-        goto done;
-
-    if (h.type == ETP_ERROR)
+    // Read the server greeting
+    int rc = get_response(c, ETP_HELLO_OK, &h, &payload);
+    if (rc != EXIT_OK)
     {
-        fprintf(stderr, "client: server didn't like HELLO (status %u)\n", h.status);
-        free(payload);
-        result = EXIT_SERVER_ERROR;
+        result = rc;
         goto done;
     }
-
-    // Ensure valid server response
-    if (h.type != ETP_HELLO_OK || h.status != 0 || h.length < 1 || h.length > 64)
+    if (h.length < 1 || h.length > 64)
     {
+        fprintf(stderr, "client: invalid HELLO_OK payload length\n");
         free(payload);
         goto done;
+    }
+    for (uint32_t i = 0; i < h.length; i++)
+    {
+        if (payload[i] < 0x20 || payload[i] > 0x7e)
+        {
+            fprintf(stderr, "client: HELLO_OK payload is not printable ASCII\n");
+            free(payload);
+            goto done;
+        }
+    }
+    free(payload);
+    payload = NULL;
+
+    if (strcmp(cmd, "list") == 0)
+    {
+        // LIST has an empty request body so we write LIST_OK bytes to stdout
+        if (etp_send(c, ETP_LIST, 0, NULL, 0) < 0)
+        {
+            fprintf(stderr, "client: failed to send LIST\n");
+            goto done;
+        }
+
+        rc = get_response(c, ETP_LIST_OK, &h, &payload);
+
+        if (rc != EXIT_OK)
+        {
+            result = rc;
+            goto done;
+        }
+
+        if (h.length != 0 && fwrite(payload, 1, h.length, stdout) != h.length)
+        {
+            fprintf(stderr, "client: failed to write LIST output\n");
+            free(payload);
+            goto done;
+        }
+
+        free(payload);
+    }
+    else if (strcmp(cmd, "get") == 0)
+    {
+        // GET carries the remote name. save the response payload as the local file
+        const char *remote = args[0];
+        const char *local = args[1];
+        size_t remote_len = strlen(remote);
+        
+        if (!etp_valid_name((const uint8_t *)remote, remote_len))
+        {
+            fprintf(stderr, "client: invalid remote file name\n");
+            goto done;
+        }
+        
+        if (etp_send(c, ETP_GET, 0, remote, (uint32_t)remote_len) < 0)
+        {
+            fprintf(stderr, "client: failed to send GET\n");
+            goto done;
+        }
+
+        rc = get_response(c, ETP_GET_OK, &h, &payload);
+        
+        if (rc != EXIT_OK)
+        {
+            result = rc;
+            goto done;
+        }
+        
+        if (write_file(local, payload, h.length) < 0)
+        {
+            fprintf(stderr, "client: could not write local file '%s'\n", local);
+            free(payload);
+            goto done;
+        }
+        
+        free(payload);
     }
     else if (strcmp(cmd, "put") == 0)
     {
+        // PUT has a 16-bit name length, then name, then file bytes.
         const char *local = args[0];
         const char *remote = args[1];
 
@@ -222,156 +297,100 @@ static int run(const char *host, uint16_t port, const char *name,
         uint8_t *file_data = NULL;
         size_t file_len = 0;
 
-        // ensure valid filename and read the local file into memory
-        if (!etp_valid_name((const uint8_t *)remote, remote_len) ||
-            read_file(local, &file_data, &file_len) < 0)
+        if (!etp_valid_name((const uint8_t *)remote, remote_len))
         {
-            fprintf(stderr, "etp-client: invalid name or unreadable local file\n");
+            fprintf(stderr, "client: invalid remote file name\n");
             goto done;
         }
 
-        // Total request size
-        size_t request_len = 2 + remote_len + file_len;
+        if (read_file(local, &file_data, &file_len) < 0)
+        {
+            fprintf(stderr, "client: cannot read local file '%s'\n", local);
+            goto done;
+        }
 
+        size_t request_len = 2 + remote_len + file_len;
+        
         if (request_len > ETP_MAX_LEN)
         {
+            fprintf(stderr, "client: file is too large for a PUT request\n");
             free(file_data);
-            fprintf(stderr, "etp-client: file too large\n");
             goto done;
         }
 
         uint8_t *request = malloc(request_len);
+        
         if (request == NULL)
         {
+            fprintf(stderr, "client: out of memory building PUT request\n");
             free(file_data);
             goto done;
         }
-
-        // Store remote filename in the first two bytes
+        
         request[0] = (uint8_t)(remote_len >> 8);
         request[1] = (uint8_t)remote_len;
-
-        // Copy remote filename
+        
         memcpy(request + 2, remote, remote_len);
-
-        // Copy file contents immediately after the filename
-        if (file_len)
+        
+        if (file_len != 0)
             memcpy(request + 2 + remote_len, file_data, file_len);
 
-        // Calculate the has of the file contents and send the PUT request to the server
+        // Hash the file contents and compare against the server's PUT_OK.
         uint8_t digest[32];
-        if (etp_sha256(file_data, file_len, digest) < 0 || etp_send(c, ETP_PUT, 0, request, (uint32_t)request_len) < 0)
+        if (etp_sha256(file_data, file_len, digest) != 0)
         {
+            fprintf(stderr, "client: could not calculate SHA-256\n");
             free(request);
             free(file_data);
             goto done;
         }
 
+        int sent = etp_send(c, ETP_PUT, 0, request, (uint32_t)request_len);
         free(request);
         free(file_data);
+        
+        if (sent < 0)
+        {
+            fprintf(stderr, "client: failed to send PUT\n");
+            goto done;
+        }
 
-        // Wait for the server to respond with PUT_OK.
-        int rc = get_response(c, ETP_PUT_OK, &h, &payload);
+        rc = get_response(c, ETP_PUT_OK, &h, &payload);
+        
         if (rc != EXIT_OK)
         {
             result = rc;
             goto done;
         }
-
-        // verify the server returned a matching hash calculated from the original file
-        if (h.length != 32 || memcmp(payload, digest, 32) != 0)
+        
+        if (h.length != sizeof digest)
         {
+            fprintf(stderr, "client: PUT_OK has invalid length\n");
+            free(payload);
+            goto done;
+        }
+        
+        if (memcmp(payload, digest, sizeof digest) != 0)
+        {
+            fprintf(stderr, "client: PUT_OK does not match local data\n");
             free(payload);
             result = EXIT_DIGEST;
             goto done;
         }
-
-        // Print the SHA-256 hash as a hexadecimal string
-        for (size_t i = 0; i < 32; i++)
+        
+        // print the hexadecimal SHA-256
+        for (size_t i = 0; i < sizeof digest; i++)
             printf("%02x", digest[i]);
-
+        
         putchar('\n');
-
         free(payload);
-
-        // Send BYE
-        result = finish_session(c);
-    }
-    else if (strcmp(cmd, "get") == 0)
-    {
-        // get the filenames
-        const char *remote = args[0];
-        const char *local = args[1];
-
-        size_t remote_len = strlen(remote);
-
-        // ensure valid name
-        if (!etp_valid_name((const uint8_t *)remote, remote_len))
-        {
-            fprintf(stderr, "client: invalid remote name\n");
-            goto done;
-        }
-
-        // send a GET request to the server with the remote filename
-        if (etp_send(c, ETP_GET, 0, remote, (uint32_t)remote_len) < 0)
-            goto done;
-
-        // Wait for the ETP_GET_OK response
-        int rc = get_response(c, ETP_GET_OK, &h, &payload);
-        if (rc != EXIT_OK)
-        {
-            result = rc;
-            goto done;
-        }
-
-        // Write the received file data to our local file
-        if (write_file(local, payload, h.length) < 0)
-        {
-            fprintf(stderr, "client: could not write local file\n");
-            free(payload);
-            goto done;
-        }
-
-        free(payload);
-
-        // Send BYE
-        result = finish_session(c);
     }
 
-    if (strcmp(cmd, "list") == 0)
-    {
-        // Send a LIST request to server
-        if (etp_send(c, ETP_LIST, 0, NULL, 0) < 0)
-            goto done;
-
-        // Wait for server LIST_OK response
-        int rc = get_response(c, ETP_LIST_OK, &h, &payload);
-        if (rc != EXIT_OK)
-        {
-            result = rc;
-            goto done;
-        }
-
-        // Print response
-        if (h.length != 0)
-            (void)fwrite(payload, 1, h.length, stdout);
-
-        free(payload);
-
-        // Send BYE
-        result = finish_session(c);
-    }
-    else
-    {
-        fprintf(stderr, "client: command not implemented yet\n");
-    }
-
-    free(payload);
-
-    fprintf(stderr, "client: connected and said hello to the server\n");
-    result = EXIT_OK;
+    // End a successful operation with BYE and verify the server's BYE_OK.
+    result = finish_session(c);
 
 done:
+    // tp_close drains the server's remaining bytes and releases the connection.
     tp_close(c);
     return result;
 }
@@ -379,9 +398,9 @@ done:
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: etp-client --host HOST --port PORT --name NAME list\n"
-            "       etp-client --host HOST --port PORT --name NAME get REMOTE LOCAL\n"
-            "       etp-client --host HOST --port PORT --name NAME put LOCAL REMOTE\n");
+            "usage: client --host HOST --port PORT --name NAME list\n"
+            "       client --host HOST --port PORT --name NAME get REMOTE LOCAL\n"
+            "       client --host HOST --port PORT --name NAME put LOCAL REMOTE\n");
     exit(EXIT_FAILURE_);
 }
 
