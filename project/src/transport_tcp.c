@@ -182,7 +182,8 @@ int tp_send_all(tp_conn *c, const void *buf, size_t n)
     while (bytes_sent < n)
     {
         // MSG_NOSIGNAL prevents the sending of a SIGPIPE signal if the peer has closed the connection, which would otherwise terminate the process.
-        ssize_t send_result = send(c->socket_file_descriptor, buf + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
+        const uint8_t *bytes = (const uint8_t *)buf;
+        ssize_t send_result = send(c->socket_file_descriptor, bytes + bytes_sent, n - bytes_sent, MSG_NOSIGNAL);
 
         if (send_result < 0)
         {
@@ -207,7 +208,8 @@ int tp_recv_exact(tp_conn *c, void *buf, size_t n)
 
     while (bytes_received < n)
     {
-        ssize_t receive_result = recv(c->socket_file_descriptor, buf + bytes_received, n - bytes_received, 0);
+        uint8_t *bytes = (uint8_t *)buf;
+        ssize_t receive_result = recv(c->socket_file_descriptor, bytes + bytes_received, n - bytes_received, 0);
 
         if (receive_result < 0)
         {

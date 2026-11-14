@@ -9,7 +9,7 @@ CPPFLAGS += -D_DEFAULT_SOURCE -Iinclude
 LDLIBS   += -pthread -lcrypto
 PORT     ?= 5000
 ROOT     ?= server-files
-SELFCHECK ?= $(HOME)/csc4200-course/project/etp_selfcheck.py
+SELFCHECK ?= tests/etp_selfcheck.py
 
 COMMON  = src/etp.c src/transport_tcp.c
 HEADERS = include/etp.h include/transport.h
@@ -29,7 +29,7 @@ run-server: build
 	./etp-server --port $(PORT) --root $(ROOT)
 
 check: build
-	python3 $(SELFCHECK) --no-build || true
+	python3 $(SELFCHECK) --no-build
 
 clean:
 	rm -f etp-server etp-client
