@@ -8,16 +8,14 @@ answer only if it is true._
 ## 1. Did you use generative AI on this assignment?
 
 - [ ] No. I did not use any generative AI tool for any part of PA1.
-- [ ] Yes, as described below.
+- [ X ] Yes, as described below.
 
 ## 2. Statement (the syllabus form)
 
-> The author acknowledges the utilization of _[tool name]_, a language model
-> developed by _[provider]_, in the preparation of this assignment. _[Tool name]_
-> was employed in the following manner(s) within this assignment: _[for example:
-> explaining socket errors; reviewing my framing code; drafting the Makefile;
-> suggesting test cases; editing DESIGN.md for clarity]_.
-
+> The author acknowledges the utilization of ChatGPT, a language model
+> developed by OpenAI, in the preparation of this assignment. ChatGPT
+> was employed in the following manner(s) within this assignment: 
+> for providing summaries of provided document and explaning errors/why testing didnt 
 ## 3. Log
 
 _One row per substantive interaction. Summaries are fine; you do not need to paste
