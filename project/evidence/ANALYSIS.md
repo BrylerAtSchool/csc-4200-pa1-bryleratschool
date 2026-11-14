@@ -7,11 +7,13 @@ capture. The numbers must come from your capture: they are checked against it._
 
 ## How I captured it
 
-_Paste the exact commands you ran (capture, server, client, ss), and the size of
-the file you transferred._
+PUT then a GET of `evidence_payload.bin` (262,144) with a 200-byte snap length.
 
-```
-```
+tcpdump -Z root -i lo -s 200 -U -w /tmp/pa1-capture-final.pcap 'tcp port 45678'
+./etp-server --port 45678 --root server-files
+./etp-client --host 127.0.0.1 --port 45678 --name evidence-client put scratch/evidence_payload.bin evidence_payload.bin
+./etp-client --host 127.0.0.1 --port 45678 --name evidence-client get evidence_payload.bin downloads/evidence_payload.bin
+ss -tan state time-wait '( sport = :45678 or dport = :45678 )'
 
 ## Facts
 
@@ -23,14 +25,14 @@ the "Sequence Number (raw)" field. With tshark, add
 `etp-facts` label: a script reads this block._
 
 ```etp-facts
-server_port:
-client_port:
-client_isn:                      # raw sequence number in the client's SYN
-server_isn:                      # raw sequence number in the server's SYN/ACK
-client_mss:                      # MSS option value in the client's SYN, in bytes
-server_to_client_payload_bytes:  # all TCP payload bytes the server sent in this session (HELLO_OK + GET_OK + BYE_OK)
-server_to_client_data_segments:  # server-to-client frames with payload, across all three responses, counted as captured
-first_fin_from:                  # server or client
+server_port: 45678
+client_port: 33508
+client_isn: 1082458682            # raw sequence number in the client's SYN
+server_isn: 2414250255            # raw sequence number in the server's SYN/ACK
+client_mss: 65495                 # MSS option value in the client's SYN, in bytes
+server_to_client_payload_bytes: 262178  # HELLO_OK + GET_OK + BYE_OK TCP payload bytes
+server_to_client_data_segments: 12      # server-to-client frames with TCP payload
+first_fin_from: server
 ```
 
 ## Q1. The handshake

@@ -44,6 +44,7 @@ whole conversations, but keep them in case you are asked._
 | 17 | accept blocks until what? until it receives confirmation from the other client that the connection is accepted? | the information | coding accept() | didn't |
 | 18 | if the socket is marked as listen() then it is blocking, otherwise if it is marked as bind() it is blocking. is that right? | the information | coding | didn't |
 | 19 | why shouldn't I malloc here struct sockaddr_in bind_address = {0}; but I do here: tp_listener *listener = malloc(sizeof(tp_listener)); | the information | coding | didn't |
+| 20 | capture PUT/GET traffic and collect the required packet and TIME-WAIT evidence | the pcap, TIME-WAIT output, and measured packet facts | no source code; recorded observed values | parsed the capture with tshark/capinfos and compared source and downloaded file hashes |
 
 
 ## 4. Where AI-produced material remains
@@ -51,7 +52,10 @@ whole conversations, but keep them in case you are asked._
 _List each file and function (or document section) that still contains code or
 text an AI tool generated, even after you edited it. If none, say none._
 
-etp.c, client.c, transport_tcp.c
+- `src/etp.c`, `src/client.c`, and `src/transport_tcp.c` — already identified by the authors; specify the functions that retain AI-generated material.
+- `README.md` — Build and run, What works and what does not, Files, and Authorship statement sections (AI-drafted text; review and edit to match the final submission).
+- `evidence/ANALYSIS.md` — capture-method description and `etp-facts` block (packet values measured and entered with AI tooling assistance).
+- `evidence/time-wait.txt` — explanatory text surrounding the captured `ss` output.
 
 ## 5. One thing the AI got wrong — or how you checked it
 
