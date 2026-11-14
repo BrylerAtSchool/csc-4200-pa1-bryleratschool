@@ -51,6 +51,8 @@ whole conversations, but keep them in case you are asked._
 _List each file and function (or document section) that still contains code or
 text an AI tool generated, even after you edited it. If none, say none._
 
+etp.c, client.c, transport_tcp.c
+
 ## 5. One thing the AI got wrong — or how you checked it
 
 _Describe one answer, suggestion or piece of code that was wrong, misleading or
@@ -58,3 +60,5 @@ did not fit the specification, and how you caught it. If you found nothing wrong
 say so and describe how you checked (a test you ran, the part of the
 specification you compared it with). If you did not use AI, describe one thing
 you got wrong yourself and how you caught it._
+
+I asked about the receive timeout in tp_close and it said that the one-second timeout prevents the drain loop from waiting indefinitely, but it really limits each individual recv() wait, not the total time spent in the loop. The loop can still continue indefinitely if the peer kept sending data often enough.
