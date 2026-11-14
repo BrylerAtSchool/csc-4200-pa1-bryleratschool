@@ -81,4 +81,4 @@ us produce. Our use of AI tools is disclosed in full in `AI_USE.md`. The capture
 and measurements in `evidence/` must come from our own programs, run by us.
 
 **Signed:** Bryler Castleberry **Date:** 11/13/26
-**Signed:** - **Date:** -
+**Signed:** Adam Campbell **Date:** 11/13/26
