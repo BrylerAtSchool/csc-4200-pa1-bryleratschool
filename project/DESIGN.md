@@ -5,10 +5,6 @@ should be true of the code you submit. Delete these italic prompts when you writ
 
 ## 1. Architecture
 
-_Your modules and what calls what. A small diagram (ASCII is fine) or a list:
-which file holds the protocol (encode/decode), which holds the transport, which
-holds the server's session logic, which holds the client._
-
  ```
           client                                  server
 +---------------------------+    +----------------------------------------+
@@ -35,15 +31,8 @@ holds the server's session logic, which holds the client._
                                     |
                              TCP byte stream
 ```
-ASCII Diagram
 
 ## 2. The transport seam
-
-_Which file is your transport? List the six operations as you implemented them.
-Confirm that no other file calls the socket API. In two or three sentences: what
-would you have to change, and what would stay the same, when you swap TCP for your
-PA2 transport in the final project?_
-
 
 transport_tcp.c is the transport file, containing six tp functions covering
 operations listen, accept, connect, send all, recv exact, and close. No other
@@ -55,54 +44,29 @@ grep -nE '#include *<(sys/socket|netinet/in|netdb)\.h>|\b(socket|bind|listen|acc
 ```
 
 
-When swapping TCP over for the PA2 transport, transport.c would be replaced with a new transport module, using the same six tp functions with the PA2 ETP-T protocol, and an updated Makefile. The files server.c, client.c, and etp.c would stay the same since they interact with the transport through the same interface. The ETP-T would need to handle reliability and distinguish individual client connections to preserve the server's concurrency design.
+When swapping TCP over for the PA2 transport, transport_tcp.c would be replaced with a new transport module, using the same six tp functions with the PA2 ETP-T protocol, and an updated Makefile. The files server.c, client.c, and etp.c would stay the same since they interact with the transport through the same interface. The ETP-T would need to handle reliability and distinguish individual client connections to preserve the server's concurrency design.
 
 
 ## 3. Framing
 
-_How does your code read one ETP message from a byte stream? Where and how do you
-handle a header that arrives in pieces, or two messages that arrive in one read?
-Where do you check VERSION and LENGTH, and why before reading the payload?_
-
-
-The code reads each ETP message by using an exact-read function first to collect the 8 bytes of the header and handles cases where the header may arrive in several pieces. It checks the VERSION and LENGTH fields before allocating memory or reading the payload, preventing invalid versions or excessively large messages from causing issues. Once the header is validated it reads LENGTH bytes exactly for the payload, with any additional messages arriving in the same read, being available for the next message. The header is built using htonl and mecpy to ensure consistent byte order.
+The code reads each ETP message by using an exact-read function first to collect the 8 bytes of the header and handles cases where the header may arrive in several pieces. It checks the VERSION and LENGTH fields before allocating memory or reading the payload, preventing invalid versions or excessively large messages from causing issues. Once the header is validated it reads LENGTH bytes exactly for the payload, with any additional messages arriving in the same read, being available for the next message. The header is built using htonl and memcpy to ensure consistent byte order.
 
 
 ## 4. Concurrency
 
-_Threads, processes or an event loop? What happens to everyone else when one
-client stalls half-way through a header? Is any state shared between sessions
-(for example, two clients PUT and GET the same file at once), and how is it
-protected?_
-
-
-The server uses a detached pthread per client connection, allowing each session to use simple blocking code without preventing other clients from being server if one stalls halway through a header. The client's peer information is copied into a session_arg structure because the original buffer in main is reused for subsequesnt connections. The only state that is shared is stdout, which is protected by g_log_lock (PUT operations also use unique temporary files with mkstemp and rename them into place so concurrent GET requests never receive partially written files). However, this means that every connected client (including idle ones) consumes a thread. 
+The server uses a detached pthread per client connection, allowing each session to use simple blocking code without preventing other clients from being served if one stalls halfway through a header. The client's peer information is copied into a session_arg structure because the original buffer in main is reused for subsequent connections. The only state that is shared is stdout, which is protected by g_log_lock (PUT operations also use unique temporary files with mkstemp and rename them into place so concurrent GET requests never receive partially written files). However, this means that every connected client (including idle ones) consumes a thread. 
 
 
 ## 5. Errors and disconnects
-
-_How do fatal and non-fatal errors differ in your code? What happens when a client
-disconnects in the middle of a GET of a large file? (C: how did you deal with
-SIGPIPE?) How does your client choose its exit code?_
-
 
 The code distinguishes fatal and non-fatal errors: fatal errors, such as BAD_VERSION, TOO_LARGE, and NOT_READY, send an ERROR response before closing the connection with break, while non-fatal errors send an ERROR response and allow the session to continue. If a client disconnects halfway through a large GET, the server stops sending, frees any allocated resources, and closes the connection without attempting another response. To prevent a broken connection from terminating the server, I ignore SIGPIPE and use MSG_NOSIGNAL; the client determines its exit code based on whether the operation completed successfully or encountered an error.
 
 
 ## 6. Threat model
 
-_One paragraph. Who could attack an ETP/1 server, and how? Name one attack your
-server resists (and how), and one it does not. Chapter 5 §5.9 and the
-specification's Security Considerations are good starting points._
-
-
 Anyone who can reach the server over the network could attempt to exploit it, including by sending malicious requests, exhausting memory, or overwriting files. The server resists path traversal attacks because etp_valid_name rejects filenames containing / or beginning with ., and it checks files with lstat and S_ISREG to prevent symlink escapes. It also validates LENGTH before allocating memory to prevent oversized payloads from exhausting memory. However, it does not protect against eavesdropping or tampering because there is no encryption or authentication, and anyone with access to the server can potentially overwrite existing files using PUT.
 
 
 ## 7. Testing
 
-_What did you test beyond `etp_selfcheck.py`? How? Name one bug your testing
-found, how you found it, and the fix._
-
-
- .bin files were built and sent with nc to test and verify how the server handled different messages. I checked the responses by each byte using xxd against the specification in section 12 of the ETP doc, verified file integrity using SHA-256 hashes, and tested invalid message types with a bad.bin file. One bug that came up was etp_read_header returned -1 even when it succeeded, causing the server to quit during the first header read without responding or printing a debug message. I diagnosed this by confirming the server was still running with pgrep, traced the issue to the incorrect return value, and fixed it by changing the success return to 1.
+.bin files were built and sent with nc to test and verify how the server handled different messages. I checked the responses by each byte using xxd against the specification in section 12 of the ETP doc, verified file integrity using SHA-256 hashes, and tested invalid message types with a bad.bin file. One bug that came up was etp_read_header returned -1 even when it succeeded, causing the server to quit during the first header read without responding or printing a debug message. I diagnosed this by confirming the server was still running with pgrep, traced the issue to the incorrect return value, and fixed it by changing the success return to 1.
