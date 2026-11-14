@@ -103,3 +103,6 @@ Anyone who can reach the server over the network could attempt to exploit it, in
 
 _What did you test beyond `etp_selfcheck.py`? How? Name one bug your testing
 found, how you found it, and the fix._
+
+
+ .bin files were built and sent with nc to test and verify how the server handled different messages. I checked the responses by each byte using xxd against the specification in section 12 of the ETP doc, verified file integrity using SHA-256 hashes, and tested invalid message types with a bad.bin file. One bug that came up was etp_read_header returned -1 even when it succeeded, causing the server to quit during the first header read without responding or printing a debug message. I diagnosed this by confirming the server was still running with pgrep, traced the issue to the incorrect return value, and fixed it by changing the success return to 1.
